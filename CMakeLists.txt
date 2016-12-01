@@ -1,11 +1,15 @@
 cmake_minimum_required(VERSION 2.8)
 project( FTSensors )
 
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 if(NOT CMAKE_COMPILER_IS_GNUCXX)
 	message(ERROR "The compiler ${CMAKE_CXX_COMPILER} is not a GNU C++ compiler. Please use a GNU C++ compiler.")
+endif()
+
+if (CMAKE_VERSION VERSION_LESS "3.1")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+else()
+	set(CMAKE_CXX_STANDARD 11)
+	set(CMAKE_CXX_STANDARD_REQUIRED ON)
 endif()
 
 if(WIN32)
