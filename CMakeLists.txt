@@ -50,6 +50,9 @@ include_directories(${PROJECT_SOURCE_DIR}/test/include)
 link_directories(${PROJECT_SOURCE_DIR}/lib)
 
 add_executable( ATI_NetBox_FT_Sensor ${PROJECT_SOURCE_DIR}/test/src/ATI_NetBox_FT_Sensor.cpp )
+add_dependencies( ATI_NetBox_FT_Sensor 
+	staticLib
+)
 
 if(WIN32)
 	target_link_libraries(ATI_NetBox_FT_Sensor FTSensors ${Boost_LIBRARIES} ws2_32)
