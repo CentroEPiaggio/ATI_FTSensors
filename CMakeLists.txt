@@ -17,7 +17,10 @@ if(WIN32)
 	add_definitions(-D _WIN32_WINNT=0x0501)
 endif()
 
-SET(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
+IF(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+        SET(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR}/bin CACHE PATH "The directory to use for installing the library" FORCE) 
+ENDIF(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+SET(LIBRARY_OUTPUT_PATH ${CMAKE_INSTALL_PREFIX}/lib)
 
 find_package(Boost 1.6 REQUIRED COMPONENTS system thread atomic chrono)
 
@@ -42,12 +45,12 @@ endif()
 #Build test app
 #####################################################################
 
-SET(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/test/bin)
+SET(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_INSTALL_PREFIX}/test/bin)
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_SOURCE_DIR}/test/include)
 
-link_directories(${PROJECT_SOURCE_DIR}/lib)
+link_directories(${CMAKE_INSTALL_PREFIX}/lib)
 
 add_executable( ATI_NetBox_FT_Sensor ${PROJECT_SOURCE_DIR}/test/src/ATI_NetBox_FT_Sensor.cpp )
 add_dependencies( ATI_NetBox_FT_Sensor 
