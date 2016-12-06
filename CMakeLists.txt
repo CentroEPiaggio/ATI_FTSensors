@@ -27,18 +27,13 @@ find_package(Boost 1.6 REQUIRED COMPONENTS system thread atomic chrono)
 include_directories(${Boost_INCLUDE_DIRS})
 include_directories(include)
 
-add_library(staticLib STATIC src/${PROJECT_NAME}.cpp)
-set_target_properties(staticLib PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-
-#add_library(sharedLib SHARED src/${PROJECT_NAME}.cpp)
-#set_target_properties(sharedLib PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
+add_library(FTSensors STATIC src/${PROJECT_NAME}.cpp)
+# add_library(FTSensors SHARED src/${PROJECT_NAME}.cpp)
 
 if(WIN32)
-	target_link_libraries(staticLib ${Boost_LIBRARIES} ws2_32)
-	#target_link_libraries(sharedLib ${Boost_LIBRARIES} ws2_32)
+	target_link_libraries(FTSensors ${Boost_LIBRARIES} ws2_32)
 else()
-	target_link_libraries(staticLib ${Boost_LIBRARIES})
-	#target_link_libraries(sharedLib ${Boost_LIBRARIES})
+	target_link_libraries(FTSensors ${Boost_LIBRARIES})
 endif()
 
 #####################################################################
@@ -54,7 +49,7 @@ link_directories(${CMAKE_INSTALL_PREFIX}/lib)
 
 add_executable( ATI_NetBox_FT_Sensor ${PROJECT_SOURCE_DIR}/test/src/ATI_NetBox_FT_Sensor.cpp )
 add_dependencies( ATI_NetBox_FT_Sensor 
-	staticLib
+	FTSensors
 )
 
 if(WIN32)
