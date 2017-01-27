@@ -28,7 +28,6 @@ include_directories(${Boost_INCLUDE_DIRS})
 include_directories(include)
 
 add_library(FTSensors STATIC src/${PROJECT_NAME}.cpp)
-# add_library(FTSensors SHARED src/${PROJECT_NAME}.cpp)
 
 if(WIN32)
 	target_link_libraries(FTSensors ${Boost_LIBRARIES} ws2_32)

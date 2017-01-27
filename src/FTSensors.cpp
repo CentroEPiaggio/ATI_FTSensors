@@ -119,56 +119,23 @@ void FTSensors::ATI::NetFT::collectData(FTSensors::ATI::NetFT* sensor)
 	}
 }
 		
-bool FTSensors::ATI::NetFT::calibration()
-{
-	/*
-		convert data byte order from host to network 
-	*/
-	this->request.command_header = htons(0x1234);//required
-	this->request.command = htons(0x0042);//calibration command
-	/*
-		force/torque samples used to calibrate the sensor
-		samples number = RDT rate * CALIBRATION_TIME_SEC
-		!!!SENSOR RUNS CALIBRATION INTERNALLY!!!
-	*/
-	this->request.sample_count = htonl(this->dataRate * CALIBRATION_TIME_SEC);
-
-	/*
-		sends calibration command to the sensor
-		if it fail return false otherwise return true
-	*/
-	std::size_t result = this->udpSock->send_to(boost::asio::buffer((char*)&(this->request),sizeof(this->request)),boost::asio::ip::udp::endpoint(boost::asio::ip::address::from_string(this->IP), this->port));
-	
-	if(result < sizeof(this->request))
-		return false;
-	
-	return true;
-}
-
 bool FTSensors::ATI::NetFT::setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter nbp, unsigned short int param_value)
 {
 	std::string command_str;
 	double retrieve_param;
-
-	boost::asio::io_service tcpIOService;
-	boost::asio::ip::tcp::socket tcpSocket(tcpIOService);
-	boost::asio::ip::tcp::resolver::iterator tcpEndpointIterator;
 	
-    boost::asio::ip::tcp::resolver tcpResolver(tcpIOService);
-    boost::asio::ip::tcp::resolver::query tcpQuery(this->IP, "http");
-    
-	try
-	{
-		// Get the endpoint corresponding to the server name for the specified service
-		tcpEndpointIterator = tcpResolver.resolve(tcpQuery);
-		// Try to establish a connection
-		boost::asio::connect(tcpSocket, tcpEndpointIterator);
-	}
-	catch(std::exception& e)
-	{
-		return false;
-	}
+	boost::asio::ip::tcp::iostream tcp_socket;
 
+	// The entire sequence of I/O operations must complete within 60 seconds.
+    // If an expiry occurs, the socket is automatically closed and the stream
+    // becomes bad.
+    tcp_socket.expires_from_now(boost::posix_time::seconds(60));
+
+     // Establish a connection to the server.
+    tcp_socket.connect(this->IP, "http");
+    if (!tcp_socket)
+    	return false;
+		
 	//Retrieve NetBox active configuration
 	if(!(this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::ACTIVE_CONFIGURATION, retrieve_param) ))
 		return false;
@@ -221,68 +188,89 @@ bool FTSensors::ATI::NetFT::setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxPara
         		return false;
 	}
 
-    boost::asio::streambuf tcpRequest;
-    std::ostream tcpRequestStream(&tcpRequest);
-	
-	tcpRequestStream << "GET /"<< command_str <<" HTTP/1.0\r\n";
-    tcpRequestStream << "Host: " << this->IP <<"\r\n";
-	tcpRequestStream << "Accept: */*\r\n";
-    tcpRequestStream << "Connection: close\r\n\r\n";
-	
-    // Send the request.
-    std::size_t tcpWriteResult = boost::asio::write(tcpSocket, tcpRequest);
-	
-	if(tcpWriteResult < tcpRequest.size())
-		return false;
-	
-	// This operation is required to complete the HTTP GET request
-    boost::asio::streambuf tcpResponse;
-    boost::asio::read_until(tcpSocket, tcpResponse, "\r\n");
+    std::stringstream tcp_request;
+
+    tcp_request << "GET /"<< command_str <<" HTTP/1.0\r\n";
+    tcp_request << "Host: " << this->IP <<"\r\n";
+	tcp_request << "Accept: */*\r\n";
+    tcp_request << "Connection: close\r\n\r\n";
+
+	tcp_socket << tcp_request.str();
+
+	// By default, the stream is tied with itself. This means that the stream
+    // automatically flush the buffered output before attempting a read. It is
+    // not necessary not explicitly flush the stream at this point.
+
+    // Check that response is OK.
+    std::string http_version;
+    unsigned int status_code;
+    std::string status_message;
+
+    tcp_socket >> http_version;
+    tcp_socket >> status_code;
+    
+    std::getline(tcp_socket, status_message);
+    if (!tcp_socket || http_version.substr(0, 5) != "HTTP/")
+    	return false;
+
+    if(status_code >= 400)
+    	return false;
 
 	return true;
 }
 
 bool FTSensors::ATI::NetFT::getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter nbp, double& param_value)
 {
-	boost::asio::io_service tcpIOService;
-	boost::asio::ip::tcp::socket tcpSocket(tcpIOService);
-	boost::asio::ip::tcp::resolver::iterator tcpEndpointIterator;
-	
-    boost::asio::ip::tcp::resolver tcpResolver(tcpIOService);
-    boost::asio::ip::tcp::resolver::query tcpQuery(this->IP, "http");
+	boost::asio::ip::tcp::iostream tcp_socket;
+
+	// The entire sequence of I/O operations must complete within 60 seconds.
+    // If an expiry occurs, the socket is automatically closed and the stream
+    // becomes bad.
+    tcp_socket.expires_from_now(boost::posix_time::seconds(60));
+
+     // Establish a connection to the server.
+    tcp_socket.connect(this->IP, "http");
+    if (!tcp_socket)
+    	return false;
+
+    std::stringstream tcp_request;
+
+    tcp_request << "GET /netftapi2.xml HTTP/1.0\r\n";
+    tcp_request << "Host: " << this->IP <<"\r\n";
+	tcp_request << "Accept: */*\r\n";
+    tcp_request << "Connection: close\r\n\r\n";
+
+	tcp_socket << tcp_request.str();
+
+    // By default, the stream is tied with itself. This means that the stream
+    // automatically flush the buffered output before attempting a read. It is
+    // not necessary not explicitly flush the stream at this point.
+
+    // Check that response is OK.
+    std::string http_version;
+    unsigned int status_code;
+    std::string status_message;
+
+    tcp_socket >> http_version;
+    tcp_socket >> status_code;
     
-	try
-	{
-		// Get the endpoint corresponding to the server name for the specified service
-		tcpEndpointIterator = tcpResolver.resolve(tcpQuery);
-		// Try to establish a connection
-		boost::asio::connect(tcpSocket, tcpEndpointIterator);
-	}
-	catch(std::exception& e)
-	{
-		return false;
-	}
+    std::getline(tcp_socket, status_message);
+    if (!tcp_socket || http_version.substr(0, 5) != "HTTP/")
+    	return false;
 
-	boost::asio::streambuf tcpRequest;
-    std::ostream tcpRequestStream(&tcpRequest);
-	
-	tcpRequestStream << "GET /netftapi2.xml HTTP/1.0\r\n";
-    tcpRequestStream << "Host: " << this->IP <<"\r\n";
-	tcpRequestStream << "Accept: */*\r\n";
-    tcpRequestStream << "Connection: close\r\n\r\n";
-	
-    // Send the request.
-    std::size_t tcpWriteResult = boost::asio::write(tcpSocket, tcpRequest);
-	
-	if(tcpWriteResult < tcpRequest.size())
-		return false;
-	
-	// This operation is required to complete the HTTP GET request
-    boost::asio::streambuf tcpResponse;
-    boost::asio::read_until(tcpSocket, tcpResponse, "</netft>");
+    if(status_code != 200)
+    	return false;
 
-    std::string tcpResponse_str(boost::asio::buffers_begin(tcpResponse.data()), boost::asio::buffers_begin(tcpResponse.data()) + boost::asio::buffer_size(tcpResponse.data()));
-    std::string tcpResponse_str_formatted(tcpResponse_str.begin() + tcpResponse_str.find("<netft>"), tcpResponse_str.end() );
+    std::stringstream tcp_response;
+    tcp_response << tcp_socket.rdbuf();
+    std::string tcp_response_str(tcp_response.str());
+
+    std::size_t idx_netft = tcp_response_str.find("<netft>");
+
+    if(idx_netft == std::string::npos)
+    	return false;
+    else
+    	boost::algorithm::erase_head(tcp_response_str, idx_netft);
 
     std::size_t pos_s;
     std::size_t pos_e;
@@ -291,72 +279,72 @@ bool FTSensors::ATI::NetFT::getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxPara
 	switch(nbp)
 	{
 		case FTSensors::ATI::NetFT::NetBoxParameter::ACTIVE_CONFIGURATION:
-																				pos_s = tcpResponse_str_formatted.find("<setcfgsel>");
-																				pos_e = tcpResponse_str_formatted.find("</setcfgsel>");
+																				pos_s = tcp_response_str.find("<setcfgsel>");
+																				pos_e = tcp_response_str.find("</setcfgsel>");
 																				pos_disp = std::string("<setcfgsel>").length();
 																				break;
 		case FTSensors::ATI::NetFT::NetBoxParameter::COUNTS_PER_FORCE:
-																				pos_s = tcpResponse_str_formatted.find("<cfgcpf>");
-																				pos_e = tcpResponse_str_formatted.find("</cfgcpf>");
+																				pos_s = tcp_response_str.find("<cfgcpf>");
+																				pos_e = tcp_response_str.find("</cfgcpf>");
 																				pos_disp = std::string("<cfgcpf>").length();
 																				break;
 		case FTSensors::ATI::NetFT::NetBoxParameter::COUNTS_PER_TORQUE:
-																				pos_s = tcpResponse_str_formatted.find("<cfgcpt>");
-																				pos_e = tcpResponse_str_formatted.find("</cfgcpt>");
+																				pos_s = tcp_response_str.find("<cfgcpt>");
+																				pos_e = tcp_response_str.find("</cfgcpt>");
 																				pos_disp = std::string("<cfgcpt>").length();
 																				break;
         case FTSensors::ATI::NetFT::NetBoxParameter::FORCE_SENSING_RANGE_X:
-																				pos_s = tcpResponse_str_formatted.find("<cfgmr>");
-																				pos_e = tcpResponse_str_formatted.find(";", pos_s);
+																				pos_s = tcp_response_str.find("<cfgmr>");
+																				pos_e = tcp_response_str.find(";", pos_s);
 																				pos_disp = std::string("<cfgmr>").length();
 																				break;
 		case FTSensors::ATI::NetFT::NetBoxParameter::FORCE_SENSING_RANGE_Y:	
-																				pos_s = tcpResponse_str_formatted.find(";", tcpResponse_str_formatted.find("<cfgmr>"));
-																				pos_e = tcpResponse_str_formatted.find(";", pos_s + std::string(";").length());
+																				pos_s = tcp_response_str.find(";", tcp_response_str.find("<cfgmr>"));
+																				pos_e = tcp_response_str.find(";", pos_s + std::string(";").length());
 																				pos_disp = std::string(";").length();
 																				break;
 		case FTSensors::ATI::NetFT::NetBoxParameter::FORCE_SENSING_RANGE_Z:
-																				pos_s = tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																						tcpResponse_str_formatted.find("<cfgmr>") )
+																				pos_s = tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																						tcp_response_str.find("<cfgmr>") )
 																					+ std::string(";").length() );
-																				pos_e = tcpResponse_str_formatted.find(";", pos_s + std::string(";").length());
+																				pos_e = tcp_response_str.find(";", pos_s + std::string(";").length());
 																				pos_disp = std::string(";").length();
 																				break;
 		case FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_SENSING_RANGE_X:	
-																				pos_s = tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																						tcpResponse_str_formatted.find("<cfgmr>") )
+																				pos_s = tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																						tcp_response_str.find("<cfgmr>") )
 																					+ std::string(";").length() )
 																					+ std::string(";").length() );
-																				pos_e = tcpResponse_str_formatted.find(";", pos_s + std::string(";").length());
+																				pos_e = tcp_response_str.find(";", pos_s + std::string(";").length());
 																				pos_disp = std::string(";").length();
 																				break;
 		case FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_SENSING_RANGE_Y:	
-																				pos_s = tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																						tcpResponse_str_formatted.find("<cfgmr>") )
+																				pos_s = tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																						tcp_response_str.find("<cfgmr>") )
 																					+ std::string(";").length() )
 																					+ std::string(";").length() )
 																					+ std::string(";").length() );
-																				pos_e = tcpResponse_str_formatted.find(";", pos_s + std::string(";").length());
+																				pos_e = tcp_response_str.find(";", pos_s + std::string(";").length());
 																				pos_disp = std::string(";").length();
 																				break;
 		case FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_SENSING_RANGE_Z:	
-																				pos_s = tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																					tcpResponse_str_formatted.find(";",
-																						tcpResponse_str_formatted.find("<cfgmr>") )
+																				pos_s = tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																					tcp_response_str.find(";",
+																						tcp_response_str.find("<cfgmr>") )
 																					+ std::string(";").length() )
 																					+ std::string(";").length() )
 																					+ std::string(";").length() )
 																					+ std::string(";").length() );
-																				pos_e = tcpResponse_str_formatted.find("</cfgmr>");
+																				pos_e = tcp_response_str.find("</cfgmr>");
 																				pos_disp = std::string(";").length();
 																				break;
         default:
@@ -366,7 +354,7 @@ bool FTSensors::ATI::NetFT::getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxPara
 	if((pos_s == std::string::npos) || (pos_e == std::string::npos))
 		return false;
 
-	param_value = boost::lexical_cast<double>(tcpResponse_str_formatted.substr( pos_s + pos_disp, pos_e - (pos_s + pos_disp) ) );
+	param_value = boost::lexical_cast<double>(tcp_response_str.substr( pos_s + pos_disp, pos_e - (pos_s + pos_disp) ) );
 
 	return true;
 }
@@ -374,6 +362,10 @@ bool FTSensors::ATI::NetFT::getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxPara
 FTSensors::ATI::NetFT::NetFT()
 {
 	this->udpSock = new boost::asio::ip::udp::socket(this->udpIOService,boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+	this->forceUnit = FTSensors::ATI::ForceUnit::NO_VALUE;
+	this->torqueUnit = FTSensors::ATI::TorqueUnit::NO_VALUE;
+	this->filterFrequency = FTSensors::ATI::FilterFrequency::NO_VALUE;
+	this->dataRate = 0;
 }
 
 FTSensors::ATI::NetFT::~NetFT()
@@ -382,6 +374,33 @@ FTSensors::ATI::NetFT::~NetFT()
         stop RDT communication
     */
     this->stopDataStream();
+}
+
+bool FTSensors::ATI::NetFT::calibration(unsigned int samples_number)
+{
+	/*
+		convert data byte order from host to network 
+	*/
+	this->request.command_header = htons(0x1234);//required
+	this->request.command = htons(0x0042);//calibration command
+	/*
+		force/torque samples used to calibrate the sensor
+		!!!SENSOR RUNS CALIBRATION INTERNALLY!!!
+	*/
+	if(samples_number == 0)
+		this->request.sample_count = htonl(this->dataRate);
+	else
+		this->request.sample_count = htonl(samples_number);
+	/*
+		sends calibration command to the sensor
+		if it fail return false otherwise return true
+	*/
+	std::size_t result = this->udpSock->send_to(boost::asio::buffer((char*)&(this->request),sizeof(this->request)),boost::asio::ip::udp::endpoint(boost::asio::ip::address::from_string(this->IP), this->port));
+	
+	if(result < sizeof(this->request))
+		return false;
+	
+	return true;
 }
 
 bool FTSensors::ATI::NetFT::setIP(std::string ip)
@@ -670,6 +689,7 @@ std::ostream& FTSensors::ATI::operator<<(std::ostream& os, FTSensors::ATI::Filte
         case FTSensors::ATI::FilterFrequency::FILTER_2000_HZ : os << "2000 Hz";   break;
         case FTSensors::ATI::FilterFrequency::FILTER_2500_HZ : os << "2500 Hz";   break;
         case FTSensors::ATI::FilterFrequency::FILTER_3000_HZ : os << "3000 Hz";   break;
+        case FTSensors::ATI::FilterFrequency::NO_VALUE 		 : os << "No Value";   break;
         default             							     : os.setstate(std::ios_base::failbit);
     }
 
@@ -680,12 +700,13 @@ std::ostream& FTSensors::ATI::operator<<(std::ostream& os, FTSensors::ATI::Force
 {
     switch(fu)
     {
-        case FTSensors::ATI::ForceUnit::lbf  : os << "lbf";  break;
-        case FTSensors::ATI::ForceUnit::N    : os << "N";    break;
-        case FTSensors::ATI::ForceUnit::klbf : os << "klbf"; break;
-        case FTSensors::ATI::ForceUnit::KN   : os << "kN";   break;
-        case FTSensors::ATI::ForceUnit::kgf  : os << "kgf";  break;
-        case FTSensors::ATI::ForceUnit::gf   : os << "gf";   break;
+        case FTSensors::ATI::ForceUnit::lbf  		: os << "lbf";  break;
+        case FTSensors::ATI::ForceUnit::N    		: os << "N";    break;
+        case FTSensors::ATI::ForceUnit::klbf 		: os << "klbf"; break;
+        case FTSensors::ATI::ForceUnit::KN   		: os << "kN";   break;
+        case FTSensors::ATI::ForceUnit::kgf  		: os << "kgf";  break;
+        case FTSensors::ATI::ForceUnit::gf   		: os << "gf";   break;
+        case FTSensors::ATI::ForceUnit::NO_VALUE	: os << "No Value";   break;
         default   						     : os.setstate(std::ios_base::failbit);
     }
 
@@ -696,13 +717,14 @@ std::ostream& FTSensors::ATI::operator<<(std::ostream& os, FTSensors::ATI::Torqu
 {
     switch(tu)
     {
-        case FTSensors::ATI::TorqueUnit::lbf_in : os << "lbf-in"; break;
-        case FTSensors::ATI::TorqueUnit::lbf_ft : os << "lbf-ft"; break;
-        case FTSensors::ATI::TorqueUnit::Nm     : os << "Nm";     break;
-        case FTSensors::ATI::TorqueUnit::Nmm    : os << "Nmm";    break;
-        case FTSensors::ATI::TorqueUnit::kgf_cm : os << "kgf-cm"; break;
-        case FTSensors::ATI::TorqueUnit::KNm    : os << "kN-m";   break;
-        default                                 : os.setstate(std::ios_base::failbit);
+        case FTSensors::ATI::TorqueUnit::lbf_in 	: os << "lbf-in"; break;
+        case FTSensors::ATI::TorqueUnit::lbf_ft 	: os << "lbf-ft"; break;
+        case FTSensors::ATI::TorqueUnit::Nm     	: os << "Nm";     break;
+        case FTSensors::ATI::TorqueUnit::Nmm    	: os << "Nmm";    break;
+        case FTSensors::ATI::TorqueUnit::kgf_cm 	: os << "kgf-cm"; break;
+        case FTSensors::ATI::TorqueUnit::KNm    	: os << "kN-m";   break;
+        case FTSensors::ATI::TorqueUnit::NO_VALUE	: os << "No Value";   break;
+        default		                                : os.setstate(std::ios_base::failbit);
     }
 
     return os;

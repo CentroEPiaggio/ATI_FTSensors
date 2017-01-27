@@ -34,12 +34,16 @@
 #define FT_SENSORS_H
 
 #include <string>
+#include <sstream>
 #include <vector>
 #include <boost/lexical_cast.hpp>
 #include <boost/asio.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/thread.hpp>
 #include <boost/atomic.hpp>
 #include <boost/chrono.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
+#include <boost/algorithm/string.hpp>
 
 namespace FTSensors
 {
@@ -48,9 +52,9 @@ namespace FTSensors
     */
     namespace ATI
     {
-        enum class FilterFrequency: unsigned short int {NO_FILTER = 0, FILTER_5_HZ = 8, FILTER_8_HZ = 7, FILTER_18_HZ = 6, FILTER_35_HZ = 5, FILTER_73_HZ = 4, FILTER_152_HZ = 3, FILTER_326_HZ = 2, FILTER_838_HZ = 1, FILTER_1500_HZ = 9, FILTER_2000_HZ = 10, FILTER_2500_HZ = 11, FILTER_3000_HZ = 12};
-        enum class ForceUnit: unsigned short int {lbf = 1, N = 2, klbf = 3, KN = 4, kgf = 5, gf = 6};
-        enum class TorqueUnit: unsigned short int {lbf_in = 1, lbf_ft = 2, Nm = 3, Nmm = 4, kgf_cm = 5, KNm = 6};
+        enum class FilterFrequency: unsigned short int {NO_FILTER = 0, FILTER_5_HZ = 8, FILTER_8_HZ = 7, FILTER_18_HZ = 6, FILTER_35_HZ = 5, FILTER_73_HZ = 4, FILTER_152_HZ = 3, FILTER_326_HZ = 2, FILTER_838_HZ = 1, FILTER_1500_HZ = 9, FILTER_2000_HZ = 10, FILTER_2500_HZ = 11, FILTER_3000_HZ = 12, NO_VALUE = 256};
+        enum class ForceUnit: unsigned short int {lbf = 1, N = 2, klbf = 3, KN = 4, kgf = 5, gf = 6, NO_VALUE = 256};
+        enum class TorqueUnit: unsigned short int {lbf_in = 1, lbf_ft = 2, Nm = 3, Nmm = 4, kgf_cm = 5, KNm = 6, NO_VALUE = 256};
         
         std::ostream& operator<<(std::ostream& os, FilterFrequency ff);
         std::ostream& operator<<(std::ostream& os, ForceUnit fu);
@@ -83,10 +87,6 @@ namespace FTSensors
                     TOOL_TRANSFORMATION_DISTANCE_X, TOOL_TRANSFORMATION_DISTANCE_Y, TOOL_TRANSFORMATION_DISTANCE_Z,
                     TOOL_TRANSFORMATION_ROTATION_X, TOOL_TRANSFORMATION_ROTATION_Y, TOOL_TRANSFORMATION_ROTATION_Z
                 };
-                /*
-                    time spent to calibrate the sensor
-                */
-                static const unsigned int CALIBRATION_TIME_SEC = 1;
                 /*
                     new f/t data max waiting time
                 */
@@ -141,8 +141,8 @@ namespace FTSensors
                 double torqueSensingRange;
                 unsigned short int dataRate;//data rate in Hz (from 1 to 7000)
 				
-                unsigned int packetNumber;//start from 1, the number of data packet received since the data stream start
-                double packetTime;//start from 0ns, the passed time since the data stream start
+                unsigned int packetNumber;//number of data packet received since the data stream start
+                double packetTime;//time passed since the data stream start
                 double Fx,Fy,Fz;//force data in forceUnit
                 double Tx,Ty,Tz;//torque data in torqueUnit
 				
@@ -150,18 +150,11 @@ namespace FTSensors
 				boost::mutex dataMutex;
                 //condition to signal that a new data is available
 				boost::condition_variable dataAvailable;
-                //ID of the thread that collect the data
+                //request data thread ID
                 boost::thread thCollectData;
-				//body of the thread that collect the data
+				//request data thread body
 				static void collectData(FTSensors::ATI::NetFT* sensor);
 				
-                /*
-                    sensor internal calibration
-
-                    @return true if the calibration is performed correctly, otherwise return false
-                */
-                bool calibration();
-
                 /*
                     send an HTTP GET request to the sensor to configure one of its parameters
 
@@ -182,6 +175,13 @@ namespace FTSensors
                     destructor
                 */
                 ~NetFT();
+
+                /*
+                    sensor internal calibration
+
+                    @return true if the calibration is performed correctly, otherwise return false
+                */
+                bool calibration(unsigned int samples_number = 0);
 
 				/*
                     set sensor IP address

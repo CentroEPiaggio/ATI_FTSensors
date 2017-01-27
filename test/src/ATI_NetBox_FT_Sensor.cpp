@@ -59,20 +59,34 @@ int main(int argc, char** argv)
 	std::cout << "Get Data Rate: " << netft.getDataRate() << "\n";
 
 	std::cout << "Start Data Stream. Result: "<< netft.startDataStream(true) << "\n\n";
+	std::cout << "Press q to exit\n\nPress c to calibrate the sensor\n\n";
 
-	unsigned int pn;
-	double pt,fx,fy,fz,tx,ty,tz;
-
-	pt = 0;
-	while((pt/1000000000.0) <= 10.0)
+	char c;
+	do
 	{
-		if(!(netft.getData(pn,pt,fx,fy,fz,tx,ty,tz)))
-			std::cout << "Data read error\n";
+		std::cout << "Press Enter to get a new data\nPress c to perform calibration\nPress q to exit\n\n";
+		std::cin.get(c);
+		std::cout << "\n\n";
+
+		if(c == 'c')
+		{
+			if(!(netft.calibration()))
+				std::cout << "Calibration Error\n\n";
+		}
+		else
+		{
+			unsigned int pn;
+			double pt,fx,fy,fz,tx,ty,tz;
+
+			if(!(netft.getData(pn,pt,fx,fy,fz,tx,ty,tz)))
+				std::cout << "Data read error\n";
+
+			std::cout << (pt/1000000000) << "sec\t" << pn << "#\t" << fx << "N\t" << fy << "N\t" << fz <<"N\n\n";
+		}
 	}
+	while(c != 'q');
 
-	std::cout << "Packet Number: " << pn << "\tPacket Time (ns): " << pt << "\n";
-
-	std::cout << "Stop Data Stream. Result: " << netft.stopDataStream() << "\n";
+	std::cout << "Stop Data Stream. Result: " << netft.stopDataStream() << "\n\n";
 
 	return 0;
 }
