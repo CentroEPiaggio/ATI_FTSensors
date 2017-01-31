@@ -13,6 +13,9 @@ else()
 endif()
 
 if(WIN32)
+	SET(EIGEN3_CMAKE_MODULE "C:/Program Files (x86)/Eigen3/share/eigen3/cmake" CACHE PATH "The directory of the Eigen3 cmake module" FORCE)
+	set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH} ${EIGEN3_CMAKE_MODULE}")
+
 	#required to suppress the boost warning
 	add_definitions(-D _WIN32_WINNT=0x0501)
 endif()
@@ -20,11 +23,15 @@ endif()
 IF(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
         SET(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR}/bin CACHE PATH "The directory to use for installing the library" FORCE) 
 ENDIF(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+
 SET(LIBRARY_OUTPUT_PATH ${CMAKE_INSTALL_PREFIX}/lib)
 
-find_package(Boost 1.6 REQUIRED COMPONENTS system thread atomic chrono)
+find_package(Boost 1.6 REQUIRED COMPONENTS system thread atomic chrono timer)
+find_package(Eigen3 REQUIRED)
 
 include_directories(${Boost_INCLUDE_DIRS})
+include_directories(${EIGEN3_INCLUDE_DIR})
+
 include_directories(include)
 
 add_library(FTSensors STATIC src/${PROJECT_NAME}.cpp)

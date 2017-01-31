@@ -2,7 +2,7 @@
  * Software License Agreement (BSD 3-Clause License)
  *
  *   FTSensors - Configure and read data from a force/torque sensor
- *   Copyright (c) 2016, Simone Ciotti (simone.ciotti@centropiaggio.unipi.it)
+ *   Copyright (c) 2016-2017, Simone Ciotti (simone.ciotti@centropiaggio.unipi.it)
  *   All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -39,11 +39,12 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/asio.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/thread.hpp>
-#include <boost/atomic.hpp>
 #include <boost/chrono.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/algorithm/string.hpp>
+#include <boost/timer/timer.hpp>
+#include <boost/shared_ptr.hpp>
+#include <boost/thread/thread.hpp>
+#include <boost/algorithm/string/erase.hpp>
+#include <Eigen/Dense>
 
 namespace FTSensors
 {
@@ -87,10 +88,8 @@ namespace FTSensors
                     TOOL_TRANSFORMATION_DISTANCE_X, TOOL_TRANSFORMATION_DISTANCE_Y, TOOL_TRANSFORMATION_DISTANCE_Z,
                     TOOL_TRANSFORMATION_ROTATION_X, TOOL_TRANSFORMATION_ROTATION_Y, TOOL_TRANSFORMATION_ROTATION_Z
                 };
-                /*
-                    new f/t data max waiting time
-                */
-                static const unsigned int DATA_WAIT_TIME_SEC = 1;
+
+                static const unsigned int MAX_TIME_SET_GET_NETBOX_PARMAS_SEC = 20;
 
                 /*
                     fixed structure to send RDT (RawDataTransfer) request
@@ -121,7 +120,6 @@ namespace FTSensors
                 }; //288 bit
 
                 Request request;//Instance of struct Request to send RDT request
-                Record record;//Instance of struct Record to receive RDT data
 				
 				//sensor IP
 				std::string IP;
@@ -130,7 +128,7 @@ namespace FTSensors
 				//all programs that use asio need to have at least one boost::asio::io_service object
 				boost::asio::io_service udpIOService;
 				//pointer to a boost::asio::ip::udp::socket object to receive/send requests on UDP
-				boost::asio::ip::udp::socket* udpSock;
+				boost::shared_ptr<boost::asio::ip::udp::socket > udpSock;
 				
                 FilterFrequency filterFrequency;//data filter frequency in Hz
                 ForceUnit forceUnit;//force measurement unit
@@ -141,20 +139,8 @@ namespace FTSensors
                 double torqueSensingRange;
                 unsigned short int dataRate;//data rate in Hz (from 1 to 7000)
 				
-                unsigned int packetNumber;//number of data packet received since the data stream start
-                double packetTime;//time passed since the data stream start
-                double Fx,Fy,Fz;//force data in forceUnit
-                double Tx,Ty,Tz;//torque data in torqueUnit
-				
-				//mutex to protect the shared data structures
-				boost::mutex dataMutex;
-                //condition to signal that a new data is available
-				boost::condition_variable dataAvailable;
-                //request data thread ID
-                boost::thread thCollectData;
-				//request data thread body
-				static void collectData(FTSensors::ATI::NetFT* sensor);
-				
+                boost::timer::cpu_timer packet_time;
+
                 /*
                     send an HTTP GET request to the sensor to configure one of its parameters
 
@@ -178,6 +164,8 @@ namespace FTSensors
 
                 /*
                     sensor internal calibration
+
+                    if samples_number == 0 then samples_number = this->dataRate
 
                     @return true if the calibration is performed correctly, otherwise return false
                 */
@@ -283,12 +271,30 @@ namespace FTSensors
                         false	it is impossible communicate to sensor
                 */
                 bool startDataStream(bool calibration = true);
+
+                /*
+                    get a new data
+
+                    Parameters:
+                        pn       data packet number
+                        pt       data packet time
+                        f        force vector
+                        t        torque vector
+
+                    Return:
+                        true    
+                        false   A timeout occurred
+                */
+                template<typename T, typename U>
+                bool getData(unsigned int& pn, double& pt, T& f, U& t);
+                template<typename T, typename U>
+                bool getData(T& f, U& t);
                 /*
                     get a new data
 
 					Parameters:
-						pn       start from 1, the number of data packet received since the data stream start
-						pt       start from 0ns, the time past since the data stream start
+						pn       data packet number
+						pt       data packet time
 						fx       force along x-axis
 						fy       force along y-axis
 						fz       force along z-axis
@@ -298,13 +304,12 @@ namespace FTSensors
 
                     Return:
                         true	
-                        false	A timeout occurred, it elapsed SENSOR_NEW_DATA_WAIT_TIME_SECONDS seconds
+                        false	A timeout occurred
                 */
-                bool getData(unsigned int& pn,double& pt,double& fx,double& fy,double& fz,double& tx,double& ty,double& tz);
-                bool getData(double& pt,double& fx,double& fy,double& fz,double& tx,double& ty,double& tz);
-				bool getData(unsigned int& pn,double& fx,double& fy,double& fz,double& tx,double& ty,double& tz);
-				bool getData(double& fx,double& fy,double& fz,double& tx,double& ty,double& tz);
-				/*
+                bool getData(unsigned int& pn, double& pt, double& fx, double& fy, double& fz, double& tx, double& ty, double& tz);
+                bool getData(double& fx, double& fy, double& fz, double& tx, double& ty, double& tz);
+
+                /*
                     1. stop the data stream
                     2. close connection to the sensor
 
