@@ -2,7 +2,7 @@
  * Software License Agreement (BSD 3-Clause License)
  *
  *   ATI_NetBox_FT_Sensor - A simple application of library FTSensors
- *   Copyright (c) 2016, Simone Ciotti (simone.ciotti@centropiaggio.unipi.it)
+ *   Copyright (c) 2016-2017, Simone Ciotti (simone.ciotti@centropiaggio.unipi.it)
  *   All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -33,3 +33,4 @@
 #include <cstdio>
 #include <iostream>
 #include <FTSensors.h>
+#include <Eigen/Dense>

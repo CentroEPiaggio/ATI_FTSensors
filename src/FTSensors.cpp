@@ -2,7 +2,7 @@
  * Software License Agreement (BSD 3-Clause License)
  *
  *   FTSensors - Configure and read data from a force/torque sensor
- *   Copyright (c) 2016, Simone Ciotti (simone.ciotti@centropiaggio.unipi.it)
+ *   Copyright (c) 2016-2017, Simone Ciotti (simone.ciotti@centropiaggio.unipi.it)
  *   All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,93 +31,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #include <FTSensors.h>
-
-void FTSensors::ATI::NetFT::collectData(FTSensors::ATI::NetFT* sensor)
-{
-	boost::chrono::system_clock::time_point first_time;
-	bool firstData;
-	boost::chrono::nanoseconds data_time;
-	//stores the number of byte received
-	size_t result;
-	//the endpoint of the UDP communication
-	//this is the sensor from read the force/torque data
-	boost::asio::ip::udp::endpoint sensorEndpoint;
-	
-	/*
-		true for the first RDT packet
-	*/
-	firstData = true;
-	
-	// get and format data
-	for(;;)
-	{
-		result = sensor->udpSock->receive_from(boost::asio::buffer((char*)&(sensor->record), sizeof(sensor->record)), sensorEndpoint);
-		
-		if(result < sizeof(sensor->record))
-			break;
-		
-		boost::unique_lock<boost::mutex> lock(sensor->dataMutex);
-		
-		/*
-			convert the data byte order from network to host
-		*/
-		sensor->record.rdt_sequence = ntohl(sensor->record.rdt_sequence);
-		sensor->record.ft_sequence = ntohl(sensor->record.ft_sequence);
-		sensor->record.status = ntohl(sensor->record.status);
-
-		sensor->record.Fx = ntohl(sensor->record.Fx);
-		sensor->record.Fy = ntohl(sensor->record.Fy);
-		sensor->record.Fz = ntohl(sensor->record.Fz);
-		sensor->record.Tx = ntohl(sensor->record.Tx);
-		sensor->record.Ty = ntohl(sensor->record.Ty);
-        sensor->record.Tz = ntohl(sensor->record.Tz);
-		
-		/*
-			convert the force/torque data from sensor tick to the set force/torque measurement unit
-		*/
-		sensor->Fx = ((double)sensor->record.Fx)/sensor->countsPerForce;
-		sensor->Fy = ((double)sensor->record.Fy)/sensor->countsPerForce;
-		sensor->Fz = ((double)sensor->record.Fz)/sensor->countsPerForce;
-		sensor->Tx = ((double)sensor->record.Tx)/sensor->countsPerTorque;
-		sensor->Ty = ((double)sensor->record.Ty)/sensor->countsPerTorque;
-		sensor->Tz = ((double)sensor->record.Tz)/sensor->countsPerTorque;
-
-		/*
-			save the RDT package sequence number
-		*/
-		sensor->packetNumber = sensor->record.rdt_sequence;
-
-		/*
-			if it is the first RDT packet set it sequence time to 0,
-			and gets the reference time to compute the elapsed time between two packet
-		*/
-		if(firstData)
-		{
-			sensor->packetTime = 0;
-			first_time = boost::chrono::system_clock::now();
-
-			firstData = false;
-		}
-		else
-		{
-			/*
-				compute the elapsed time between the previous packet and this packet
-			*/
-			data_time = boost::chrono::system_clock::now() - first_time;
-			/*
-				store the elapsed time in nanoseconds
-			*/
-			sensor->packetTime = data_time.count();
-		}
-
-		/*
-			signals to function getData that new force/torque data is available
-		*/
-		sensor->dataAvailable.notify_one();
-		/* create a cancellation point*/
-		boost::this_thread::interruption_point();
-	}
-}
 		
 bool FTSensors::ATI::NetFT::setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter nbp, unsigned short int param_value)
 {
@@ -126,16 +39,16 @@ bool FTSensors::ATI::NetFT::setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxPara
 	
 	boost::asio::ip::tcp::iostream tcp_socket;
 
-	// The entire sequence of I/O operations must complete within 60 seconds.
+	// The entire sequence of I/O operations must complete within MAX_TIME_SET_GET_NETBOX_PARMAS_SEC seconds.
     // If an expiry occurs, the socket is automatically closed and the stream
     // becomes bad.
-    tcp_socket.expires_from_now(boost::posix_time::seconds(60));
+    tcp_socket.expires_from_now(boost::posix_time::seconds(MAX_TIME_SET_GET_NETBOX_PARMAS_SEC));
 
      // Establish a connection to the server.
     tcp_socket.connect(this->IP, "http");
     if (!tcp_socket)
     	return false;
-		
+
 	//Retrieve NetBox active configuration
 	if(!(this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::ACTIVE_CONFIGURATION, retrieve_param) ))
 		return false;
@@ -226,7 +139,7 @@ bool FTSensors::ATI::NetFT::getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxPara
 	// The entire sequence of I/O operations must complete within 60 seconds.
     // If an expiry occurs, the socket is automatically closed and the stream
     // becomes bad.
-    tcp_socket.expires_from_now(boost::posix_time::seconds(60));
+    tcp_socket.expires_from_now(boost::posix_time::seconds(MAX_TIME_SET_GET_NETBOX_PARMAS_SEC));
 
      // Establish a connection to the server.
     tcp_socket.connect(this->IP, "http");
@@ -253,7 +166,7 @@ bool FTSensors::ATI::NetFT::getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxPara
 
     tcp_socket >> http_version;
     tcp_socket >> status_code;
-    
+
     std::getline(tcp_socket, status_message);
     if (!tcp_socket || http_version.substr(0, 5) != "HTTP/")
     	return false;
@@ -361,11 +274,22 @@ bool FTSensors::ATI::NetFT::getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxPara
 
 FTSensors::ATI::NetFT::NetFT()
 {
-	this->udpSock = new boost::asio::ip::udp::socket(this->udpIOService,boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+	boost::asio::socket_base::receive_buffer_size recv_buff_size(sizeof(FTSensors::ATI::NetFT::Record));
+	this->udpSock.reset(new boost::asio::ip::udp::socket(this->udpIOService,boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0) ) );	
+	this->udpSock->set_option(recv_buff_size);
+
+	this->IP = "127.0.0.1";
+	this->filterFrequency = FTSensors::ATI::FilterFrequency::NO_VALUE;
 	this->forceUnit = FTSensors::ATI::ForceUnit::NO_VALUE;
 	this->torqueUnit = FTSensors::ATI::TorqueUnit::NO_VALUE;
-	this->filterFrequency = FTSensors::ATI::FilterFrequency::NO_VALUE;
+	this->countsPerForce = 0;
+	this->countsPerTorque = 0;
+	this->forceSensingRange = 0;
+	this->torqueSensingRange = 0;
 	this->dataRate = 0;
+	this->forceBias = Eigen::Vector3d::Zero();
+	this->torqueBias = Eigen::Vector3d::Zero();
+	this->packet_time.stop();
 }
 
 FTSensors::ATI::NetFT::~NetFT()
@@ -378,6 +302,31 @@ FTSensors::ATI::NetFT::~NetFT()
 
 bool FTSensors::ATI::NetFT::calibration(unsigned int samples_number)
 {
+	/*
+		get samples_number samples to compute the bias
+	*/
+	Eigen::Vector3d f;
+	Eigen::Vector3d t;
+	unsigned int smpls;
+
+	this->forceBias = Eigen::Vector3d::Zero();
+	this->torqueBias = Eigen::Vector3d::Zero();
+	
+	if(samples_number == 0)
+		smpls = this->dataRate;
+
+	for(int i = 0; i < smpls; i++)
+	{
+		if(!(this->getData(f,t)))
+			return false;
+
+		this->forceBias += f;
+		this->torqueBias += t;
+	}
+
+	this->forceBias /= smpls;
+	this->torqueBias /= smpls;
+
 	/*
 		convert data byte order from host to network 
 	*/
@@ -399,8 +348,55 @@ bool FTSensors::ATI::NetFT::calibration(unsigned int samples_number)
 	
 	if(result < sizeof(this->request))
 		return false;
-	
+
 	return true;
+}
+
+template<typename T,typename U>
+void FTSensors::ATI::NetFT::getBias(T& f,U& t)
+{
+	f.resize(3);
+	t.resize(3);
+
+	for(int i = 0; i < 3; i++)
+	{
+		f[i] = this->forceBias[i];
+		t[i] = this->torqueBias[i];
+	}
+}
+
+template
+void FTSensors::ATI::NetFT::getBias<>(std::vector<double>& f, std::vector<double>& t);
+template
+void FTSensors::ATI::NetFT::getBias<>(std::vector<double>& f, Eigen::VectorXd& t);
+template
+void FTSensors::ATI::NetFT::getBias<>(std::vector<double>& f, Eigen::Vector3d& t);
+template
+void FTSensors::ATI::NetFT::getBias<>(Eigen::VectorXd& f, std::vector<double>& t);
+template
+void FTSensors::ATI::NetFT::getBias<>(Eigen::VectorXd& f, Eigen::VectorXd& t);
+template
+void FTSensors::ATI::NetFT::getBias<>(Eigen::VectorXd& f, Eigen::Vector3d& t);
+template
+void FTSensors::ATI::NetFT::getBias<>(Eigen::Vector3d& f, std::vector<double>& t);
+template
+void FTSensors::ATI::NetFT::getBias<>(Eigen::Vector3d& f, Eigen::VectorXd& t);
+template
+void FTSensors::ATI::NetFT::getBias<>(Eigen::Vector3d& f, Eigen::Vector3d& t);
+
+void FTSensors::ATI::NetFT::getBias(double& fx,double& fy,double& fz,double& tx,double& ty,double& tz)
+{
+    std::vector<double> f;
+    std::vector<double> t;
+
+	this->getBias(f,t);
+
+	fx = f[0];
+	fy = f[1];
+	fz = f[2];
+	tx = t[0];
+	ty = t[1];
+	tz = t[2];
 }
 
 bool FTSensors::ATI::NetFT::setIP(std::string ip)
@@ -417,23 +413,39 @@ bool FTSensors::ATI::NetFT::setIP(std::string ip)
 		return false;
 
 	this->IP = ip;
-	
+
 	//Host reachable?
-	bool res_1, res_2, res_3, res_4, res_5, res_6, res_7, res_8, res_9, res_10;
+	bool result;
 
-	res_1 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::RDT_INTERFACE, 1);
-	res_2 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::RDT_BUFFER, 1);
-	res_3 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::MULTI_UNIT_SYNC, 0);
-	res_4 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::THRESHOLD_MONITORING, 0);
-	res_5 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_DISTANCE_X, 0);
-	res_6 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_DISTANCE_Y, 0);
-	res_7 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_DISTANCE_Z, 0);
-	res_8 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_ROTATION_X, 0);
-	res_9 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_ROTATION_Y, 0);
-	res_10 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_ROTATION_Z, 0);
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::RDT_INTERFACE, 1);
+	if(!result) return false;
 
-	if(!res_1 || !res_2 || !res_3 || !res_4 || !res_5 || !res_6 || !res_7 || !res_8 || !res_9 || !res_10 )
-		return false;
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::RDT_BUFFER, 1);
+	if(!result) return false;
+
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::MULTI_UNIT_SYNC, 0);
+	if(!result) return false;
+
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::THRESHOLD_MONITORING, 0);
+	if(!result) return false;
+
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_DISTANCE_X, 0);
+	if(!result) return false;
+
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_DISTANCE_Y, 0);
+	if(!result) return false;
+
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_DISTANCE_Z, 0);
+	if(!result) return false;
+
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_ROTATION_X, 0);
+	if(!result) return false;
+
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_ROTATION_Y, 0);
+	if(!result) return false;
+
+	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TOOL_TRANSFORMATION_ROTATION_Z, 0);
+	if(!result) return false;
 
 	return true;
 }
@@ -469,14 +481,14 @@ FTSensors::ATI::FilterFrequency FTSensors::ATI::NetFT::getFilterFrequency()
 
 bool FTSensors::ATI::NetFT::setForceUnit(FTSensors::ATI::ForceUnit fu)
 {
-	bool res_1, res_2;
+	bool result;
 	double ret_param;
 
-    res_1 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::FORCE_UNIT, static_cast<unsigned short int>(fu) );
-	res_2 = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::COUNTS_PER_FORCE, ret_param);
+    result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::FORCE_UNIT, static_cast<unsigned short int>(fu) );
+    if(!result) return false;
 
-	if(!res_1 || !res_2)
-		return false;
+	result = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::COUNTS_PER_FORCE, ret_param);
+	if(!result) return false;
 
 	this->forceUnit = fu;
 	this->countsPerForce = ret_param;
@@ -489,35 +501,62 @@ FTSensors::ATI::ForceUnit FTSensors::ATI::NetFT::getForceUnit()
     return this->forceUnit;
 }
 
-bool FTSensors::ATI::NetFT::getForceSensingRange(double& fx, double& fy, double& fz)
+template<typename T>
+bool FTSensors::ATI::NetFT::getForceSensingRange(T& f)
 {
-	bool res_1, res_2, res_3;
+	bool result;
 	double ret_param_1, ret_param_2, ret_param_3;
 
-	res_1 = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::FORCE_SENSING_RANGE_X, ret_param_1);
-	res_2 = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::FORCE_SENSING_RANGE_Y, ret_param_2);
-	res_3 = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::FORCE_SENSING_RANGE_Z, ret_param_3);
+	result = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::FORCE_SENSING_RANGE_X, ret_param_1);
+	if(!result) return false;
 
-	if(!res_1 || !res_2 || !res_3)
-		return false;
+	result = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::FORCE_SENSING_RANGE_Y, ret_param_2);
+	if(!result) return false;
 
-	fx = ret_param_1;
-	fy = ret_param_2;
-	fz = ret_param_3;
+	result = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::FORCE_SENSING_RANGE_Z, ret_param_3);
+	if(!result) return false;
+
+	f.resize(3);
+
+	f[0] = ret_param_1;
+	f[1] = ret_param_2;
+	f[2] = ret_param_3;
+
+	return true;
+}
+
+template
+bool FTSensors::ATI::NetFT::getForceSensingRange<>(std::vector<double>& f);
+template
+bool FTSensors::ATI::NetFT::getForceSensingRange<>(Eigen::VectorXd& f);
+template
+bool FTSensors::ATI::NetFT::getForceSensingRange<>(Eigen::Vector3d& f);
+
+bool FTSensors::ATI::NetFT::getForceSensingRange(double& fx, double& fy, double& fz)
+{
+	bool result;
+	std::vector<double> f;
+
+	result = this->getForceSensingRange(f);
+	if(!result) return false;
+
+	fx = f[0];
+	fy = f[1];
+	fz = f[2];
 
 	return true;
 }
 
 bool FTSensors::ATI::NetFT::setTorqueUnit(FTSensors::ATI::TorqueUnit tu)
 {   
-	bool res_1, res_2;
+	bool result;
 	double ret_param;
 
-   	res_1 = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_UNIT, static_cast<unsigned short int>(tu) );
-	res_2 = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::COUNTS_PER_TORQUE, ret_param);
+   	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_UNIT, static_cast<unsigned short int>(tu) );
+   	if(!result) return false;
 
-	if(!res_1 || !res_2)
-		return false;
+	result = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::COUNTS_PER_TORQUE, ret_param);
+	if(!result) return false;
 
 	this->torqueUnit = tu;
 	this->countsPerTorque = ret_param;
@@ -530,21 +569,48 @@ FTSensors::ATI::TorqueUnit FTSensors::ATI::NetFT::getTorqueUnit()
     return this->torqueUnit;
 }
 
-bool FTSensors::ATI::NetFT::getTorqueSensingRange(double& tx, double& ty, double& tz)
+template<typename T>
+bool FTSensors::ATI::NetFT::getTorqueSensingRange(T& t)
 {
-	bool res_1, res_2, res_3;
+	bool result;
 	double ret_param_1, ret_param_2, ret_param_3;
 
-	res_1 = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_SENSING_RANGE_X, ret_param_1);
-	res_2 = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_SENSING_RANGE_Y, ret_param_2);
-	res_3 = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_SENSING_RANGE_Z, ret_param_3);
+	result = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_SENSING_RANGE_X, ret_param_1);
+	if(!result) return false;
 
-	if(!res_1 || !res_2 || !res_3)
-		return false;
+	result = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_SENSING_RANGE_Y, ret_param_2);
+	if(!result) return false;
 
-	tx = ret_param_1;
-	ty = ret_param_2;
-	tz = ret_param_3;
+	result = this->getNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::TORQUE_SENSING_RANGE_Z, ret_param_3);
+	if(!result) return false;
+
+	t.resize(3);
+
+	t[0] = ret_param_1;
+	t[1] = ret_param_2;
+	t[2] = ret_param_3;
+
+	return true;
+}
+
+template
+bool FTSensors::ATI::NetFT::getTorqueSensingRange<>(std::vector<double>& t);
+template
+bool FTSensors::ATI::NetFT::getTorqueSensingRange<>(Eigen::VectorXd& t);
+template
+bool FTSensors::ATI::NetFT::getTorqueSensingRange<>(Eigen::Vector3d& t);
+
+bool FTSensors::ATI::NetFT::getTorqueSensingRange(double& tx, double& ty, double& tz)
+{
+	bool result;
+	std::vector<double> t;
+
+	result = this->getTorqueSensingRange(t);
+	if(!result) return false;
+
+	tx = t[0];
+	ty = t[1];
+	tz = t[2];
 
 	return true;
 }
@@ -555,11 +621,11 @@ bool FTSensors::ATI::NetFT::setDataRate(unsigned short int dr)
 
     if((dr>0) && (dr<=7000))
     {
+        result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::DATA_RATE, dr);
+        if(!result) return false;
+
         this->dataRate = dr;
-
-       	result = this->setNetBoxParameter(FTSensors::ATI::NetFT::NetBoxParameter::DATA_RATE, dr);
-
-        return result;
+        return true;
     }
 
     return false;
@@ -583,10 +649,7 @@ bool FTSensors::ATI::NetFT::startDataStream(bool calibration)
 	
 	if(udpSendResult < sizeof(this->request))
 		return false;
-	
-	this->thCollectData = boost::thread(&(FTSensors::ATI::NetFT::collectData),this);
-	this->thCollectData.detach();
-        
+
     //if requried run the calibration
     if(calibration)
 		return this->calibration();
@@ -594,61 +657,169 @@ bool FTSensors::ATI::NetFT::startDataStream(bool calibration)
 	return true;
 }
 
-bool FTSensors::ATI::NetFT::getData(unsigned int& pn,double& pt,double& fx,double& fy,double& fz,double& tx,double& ty,double& tz)
+template<typename T,typename U>
+bool FTSensors::ATI::NetFT::getData(unsigned int& pn,double& pt,T& f,U& t)
 {
-	boost::unique_lock<boost::mutex> lock(this->dataMutex);
-	
-	if(this->dataAvailable.wait_for(lock, boost::chrono::seconds(this->DATA_WAIT_TIME_SEC)) == boost::cv_status::no_timeout )
-	{
-		//get the new data
-		pn = this->packetNumber;
-		pt = this->packetTime;
-		
-		fx = this->Fx;
-        fy = this->Fy;
-        fz = this->Fz;
-        tx = this->Tx;
-        ty = this->Ty;
-        tz = this->Tz;
-		
-		return true;
-	}
-	else
+	//Instance of struct Record to receive RDT data
+	Record record;
+	//stores the number of byte received
+	std::size_t result;
+	//the endpoint of the UDP communication
+	//this is the sensor from read the force/torque data
+	boost::asio::ip::udp::endpoint sensorEndpoint;
+
+	boost::timer::cpu_times times;
+
+	f.resize(3);
+    t.resize(3);
+
+	//disacrd old buffered data
+	while(this->udpSock->available() > 0) this->udpSock->receive_from(boost::asio::buffer((char*)&(record), sizeof(record)), sensorEndpoint);
+	//retrieve the newest data
+	result = this->udpSock->receive_from(boost::asio::buffer((char*)&(record), sizeof(record)), sensorEndpoint);
+
+	if(result < sizeof(record))
 	{
 		pn = 0;
 		pt = 0;
 		
-		fx = 0.0;
-        fy = 0.0;
-        fz = 0.0;
-        tx = 0.0;
-        ty = 0.0;
-        tz = 0.0;
+		for(int i=0; i<3; i++)
+		{
+			f[i] = 0;
+			t[i] = 0;
+		}		
+
+		return false;
 	}
+
+	/*
+		convert the data byte order from network to host
+	*/
+	record.rdt_sequence = ntohl(record.rdt_sequence);
+	record.ft_sequence = ntohl(record.ft_sequence);
+	record.status = ntohl(record.status);
+
+	record.Fx = ntohl(record.Fx);
+	record.Fy = ntohl(record.Fy);
+	record.Fz = ntohl(record.Fz);
+	record.Tx = ntohl(record.Tx);
+	record.Ty = ntohl(record.Ty);
+    record.Tz = ntohl(record.Tz);
 	
-	return false;
+	pn = record.rdt_sequence;
+
+	if(this->packet_time.is_stopped())
+	{
+		this->packet_time.start();
+		pt = 0;
+	}
+	else
+	{
+		times = this->packet_time.elapsed();
+		pt = times.wall;
+	}
+
+	/*
+		convert the force/torque data from sensor tick to the set force/torque measurement unit
+	*/
+	f[0] = ((double)record.Fx)/this->countsPerForce;
+	f[1] = ((double)record.Fy)/this->countsPerForce;
+	f[2] = ((double)record.Fz)/this->countsPerForce;
+	t[0] = ((double)record.Tx)/this->countsPerTorque;
+	t[1] = ((double)record.Ty)/this->countsPerTorque;
+	t[2] = ((double)record.Tz)/this->countsPerTorque;
+	
+	return true;
 }
 
-bool FTSensors::ATI::NetFT::getData(double& pt,double& fx,double& fy,double& fz,double& tx,double& ty,double& tz)
-{
-    unsigned int pn;
+template
+bool FTSensors::ATI::NetFT::getData<>(unsigned int& pn, double& pt, std::vector<double>& f, std::vector<double>& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(unsigned int& pn, double& pt, std::vector<double>& f, Eigen::VectorXd& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(unsigned int& pn, double& pt, std::vector<double>& f, Eigen::Vector3d& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(unsigned int& pn, double& pt, Eigen::VectorXd& f, std::vector<double>& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(unsigned int& pn, double& pt, Eigen::VectorXd& f, Eigen::VectorXd& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(unsigned int& pn, double& pt, Eigen::VectorXd& f, Eigen::Vector3d& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(unsigned int& pn, double& pt, Eigen::Vector3d& f, std::vector<double>& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(unsigned int& pn, double& pt, Eigen::Vector3d& f, Eigen::VectorXd& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(unsigned int& pn, double& pt, Eigen::Vector3d& f, Eigen::Vector3d& t);
 
-    return (this->getData(pn,pt,fx,fy,fz,tx,ty,tz));
+template<typename T,typename U>
+bool FTSensors::ATI::NetFT::getData(T& f,U& t)
+{
+	unsigned int pn;
+	double pt;
+	bool result;
+
+	result = this->getData(pn,pt,f,t);
+
+	return result;
 }
 
-bool FTSensors::ATI::NetFT::getData(unsigned int& pn,double& fx,double& fy,double& fz,double& tx,double& ty,double& tz)
-{
-    double pt;
+template
+bool FTSensors::ATI::NetFT::getData<>(std::vector<double>& f, std::vector<double>& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(std::vector<double>& f, Eigen::VectorXd& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(std::vector<double>& f, Eigen::Vector3d& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(Eigen::VectorXd& f, std::vector<double>& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(Eigen::VectorXd& f, Eigen::VectorXd& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(Eigen::VectorXd& f, Eigen::Vector3d& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(Eigen::Vector3d& f, std::vector<double>& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(Eigen::Vector3d& f, Eigen::VectorXd& t);
+template
+bool FTSensors::ATI::NetFT::getData<>(Eigen::Vector3d& f, Eigen::Vector3d& t);
 
-    return (this->getData(pn,pt,fx,fy,fz,tx,ty,tz));
+bool FTSensors::ATI::NetFT::getData(unsigned int& pn,double& pt,double& fx,double& fy,double& fz,double& tx,double& ty,double& tz)
+{
+	std::vector<double>	f;
+	std::vector<double> t;
+	bool result;
+
+	result = this->getData(pn,pt,f,t);
+
+	fx = f[0];
+	fy = f[1];
+	fz = f[2];
+
+	tx = t[0];
+	ty = t[1];
+	tz = t[2];
+
+	return result;
 }
 
 bool FTSensors::ATI::NetFT::getData(double& fx,double& fy,double& fz,double& tx,double& ty,double& tz)
 {
     unsigned int pn;
     double pt;
+    std::vector<double>	f;
+	std::vector<double> t;
+	bool result;
 
-    return (this->getData(pn,pt,fx,fy,fz,tx,ty,tz));
+	result = this->getData(pn,pt,f,t);
+
+	fx = f[0];
+	fy = f[1];
+	fz = f[2];
+
+	tx = t[0];
+	ty = t[1];
+	tz = t[2];
+
+	return result;
 }
 
 bool FTSensors::ATI::NetFT::stopDataStream()
@@ -666,8 +837,7 @@ bool FTSensors::ATI::NetFT::stopDataStream()
 	if(result < sizeof(this->request))
 		return false;
 	
-	//send a cancellation request to the specified thread
-	this->thCollectData.interrupt();
+	this->packet_time.stop();
 
 	return true;
 }

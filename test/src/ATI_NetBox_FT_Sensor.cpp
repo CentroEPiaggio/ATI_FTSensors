@@ -2,7 +2,7 @@
  * Software License Agreement (BSD 3-Clause License)
  *
  *   ATI_NetBox_FT_Sensor - A simple application of library FTSensors
- *   Copyright (c) 2016, Simone Ciotti (simone.ciotti@centropiaggio.unipi.it)
+ *   Copyright (c) 2016-2017, Simone Ciotti (simone.ciotti@centropiaggio.unipi.it)
  *   All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -55,36 +55,72 @@ int main(int argc, char** argv)
 	netft.getTorqueSensingRange(sens_range_tx,sens_range_ty,sens_range_tz);
 	std::cout << "Get Torque Sensing Range (x,y,z): " << sens_range_tx << "\t" << sens_range_ty << "\t" << sens_range_tz << "\n\n";
 
-	std::cout << "Set Data Rate. Result: " << netft.setDataRate(2000) << "\n\n";
+	std::cout << "Set Data Rate. Result: " << netft.setDataRate(10) << "\n\n";
 	std::cout << "Get Data Rate: " << netft.getDataRate() << "\n";
 
-	std::cout << "Start Data Stream. Result: "<< netft.startDataStream(true) << "\n\n";
-	std::cout << "Press q to exit\n\nPress c to calibrate the sensor\n\n";
+	std::cout << "Start Data Stream and perform the calibration. Result: "<< netft.startDataStream(true) << "\n\n";
 
-	char c;
+	std::string c;
 	do
 	{
-		std::cout << "Press Enter to get a new data\nPress c to perform calibration\nPress q to exit\n\n";
-		std::cin.get(c);
+		std::cout << "Enter 'd' to get a new data\nEnter 'c' to perform calibration\nEnter 'r' to reset the data stream without perform the calibration\nEnter 'q' to exit\n\n";
+		std::cin >> c;
 		std::cout << "\n\n";
 
-		if(c == 'c')
+		if(c == "c")
 		{
 			if(!(netft.calibration()))
 				std::cout << "Calibration Error\n\n";
+
+			double fbx,fby,fbz;
+			double tbx,tby,tbz;
+
+			netft.getBias(fbx,fby,fbz,tbx,tby,tbz);
+			
+			std::cout << "Force Bias: " << fbx << "," << fby << "," << fbz << " " << netft.getForceUnit() << "\n";
+			std::cout << "\nTorque Bias: " << tbx << "," << tby << "," << tbz << " " << netft.getTorqueUnit() << "\n\n";
 		}
 		else
 		{
-			unsigned int pn;
-			double pt,fx,fy,fz,tx,ty,tz;
+			if(c == "r")
+			{
+				netft.stopDataStream();
+				netft.startDataStream(false);
+			}
+			else
+			{
+				unsigned int pn;
+				double pt;
+				
+				double fx,fy,fz,tx,ty,tz;
 
-			if(!(netft.getData(pn,pt,fx,fy,fz,tx,ty,tz)))
-				std::cout << "Data read error\n";
+				if(!(netft.getData(pn,pt,fx,fy,fz,tx,ty,tz)))
+					std::cout << "Data read error\n";
 
-			std::cout << (pt/1000000000) << "sec\t" << pn << "#\t" << fx << "N\t" << fy << "N\t" << fz <<"N\n\n";
+				std::cout << (pt/1000000000) << "sec\t" << pn << "#\t" << fx << "N\t" << fy << "N\t" << fz <<"N\n\n";
+				
+				/*
+				std::vector<double > f(3);
+				std::vector<double > t(3);
+				
+				if(!(netft.getData(pn,pt,f,t)))
+					std::cout << "Data read error\n";
+
+				std::cout << (pt/1000000000) << "sec\t" << pn << "#\t" << f[0] << "N\t" << f[1] << "N\t" << f[2] <<"N\n\n";
+				*/
+				/*
+				Eigen::Vector3d f;
+				Eigen::Vector3d t;
+				
+				if(!(netft.getData(pn,pt,f,t)))
+					std::cout << "Data read error\n";
+
+				std::cout << (pt/1000000000) << "sec\t" << pn << "#\t" << f[0] << "N\t" << f[1] << "N\t" << f[2] <<"N\n\n";
+				*/
+			}
 		}
 	}
-	while(c != 'q');
+	while(c != "q");
 
 	std::cout << "Stop Data Stream. Result: " << netft.stopDataStream() << "\n\n";
 
